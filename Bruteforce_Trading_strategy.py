@@ -153,7 +153,7 @@ def run_strategy():
         print(f"Testing Buy Threshold: {buy_threshold}, Sell Threshold: {sell_threshold}")
 
         # Initialize columns for signals, positions, and returns
-        results['Signal'] = 'Hold'
+        results['Signal'] = 'No Action'
         results['Position'] = 0
         results['Daily Return'] = 0.0
         results['Strategy Return'] = 0.0
@@ -161,7 +161,6 @@ def run_strategy():
         results['Sell Price'] = np.nan
 
         cumulative_returns = {ticker: [] for ticker in tickers}
-        trade_returns = []
 
         for ticker in tickers:
             ticker_data = results[results['Ticker'] == ticker].copy()
@@ -170,6 +169,7 @@ def run_strategy():
 
             for i in range(len(ticker_data)):
                 row = ticker_data.iloc[i]
+                date = row['Date']
 
                 if row['Rate of Change'] > buy_threshold and current_position is None:
                     current_position = 'Bought'
@@ -183,8 +183,8 @@ def run_strategy():
                     stamp_duty_buy = stamp_duty_rate * buy_price
                     total_buy_costs = brokerage_buy + gst_buy + exchange_charges_buy + sebi_charges_buy + stamp_duty_buy
                     
-                    results.loc[(results['Ticker'] == ticker) & (results['Date'] == row['Date']), 'Buy Price'] = buy_price
-                    results.loc[(results['Ticker'] == ticker) & (results['Date'] == row['Date']), 'Signal'] = 'Buy'
+                    results.loc[(results['Ticker'] == ticker) & (results['Date'] == date), 'Buy Price'] = buy_price
+                    results.loc[(results['Ticker'] == ticker) & (results['Date'] == date), 'Signal'] = 'Buy'
                 
                 elif row['Rate of Change'] < sell_threshold and current_position == 'Bought':
                     current_position = None
@@ -202,32 +202,25 @@ def run_strategy():
                     total_costs = total_buy_costs + total_sell_costs
                     
                     trade_return = (sell_price - buy_price - total_costs) / buy_price
-                    trade_return_after_tax = trade_return * (1 - tax_rate)
+                    if trade_return > 0:
+                        trade_return_after_tax = trade_return * (1 - tax_rate)
+                    else:
+                        trade_return_after_tax = trade_return
+                    
                     cumulative_returns[ticker].append(trade_return_after_tax + 1)
-                    trade_returns.append({
-                        'Ticker': ticker,
-                        'Buy Price': buy_price,
-                        'Sell Price': sell_price,
-                        'Trade Return': trade_return_after_tax,
-                        'Date': row['Date']
-                    })
-                    results.loc[(results['Ticker'] == ticker) & (results['Date'] == row['Date']), 'Sell Price'] = sell_price
-                    results.loc[(results['Ticker'] == ticker) & (results['Date'] == row['Date']), 'Signal'] = 'Sell'
+                    results.loc[(results['Ticker'] == ticker) & (results['Date'] == date), 'Sell Price'] = sell_price
+                    results.loc[(results['Ticker'] == ticker) & (results['Date'] == date), 'Signal'] = 'Sell'
                     buy_price = None
+                else:
+                    if current_position == 'Bought':
+                        results.loc[(results['Ticker'] == ticker) & (results['Date'] == date), 'Signal'] = 'Hold'
+                    else:
+                        results.loc[(results['Ticker'] == ticker) & (results['Date'] == date), 'Signal'] = 'No Action'
 
-                if current_position == 'Bought':
-                    results.loc[(results['Ticker'] == ticker) & (results['Date'] == row['Date']), 'Strategy Return'] = (row['Close Price'] - buy_price) / buy_price
-                    results.loc[(results['Ticker'] == ticker) & (results['Date'] == row['Date']), 'Signal'] = 'Hold'
-
-        # Save trade returns to CSV
-        trade_returns_df = pd.DataFrame(trade_returns)
-        trade_returns_df.to_csv('trade_returns.csv', index=False)
-        
         # Calculate the average cumulative return for each ticker and store the best
         for ticker, returns in cumulative_returns.items():
             if len(returns) > 0:
                 ticker_cumulative_return = np.prod(returns) - 1
-                print(f"Ticker: {ticker}, Cumulative Return: {ticker_cumulative_return * 100:.2f}%")  # Debug output
                 if ticker not in best_cumulative_returns or ticker_cumulative_return > best_cumulative_returns[ticker]:
                     best_cumulative_returns[ticker] = ticker_cumulative_return
                     best_buy_thresholds[ticker] = buy_threshold
@@ -247,9 +240,9 @@ def run_strategy():
     subject = "Trading Strategy Results"
     body_lines = []
     for ticker in best_cumulative_returns.keys():
-        action = get_todays_recommendation(results, ticker, best_buy_thresholds[ticker], best_sell_thresholds[ticker])
+        last_signal = results[results['Ticker'] == ticker].iloc[-1]['Signal']
         body_lines.append(f"{ticker}: Best Buy Threshold: {best_buy_thresholds[ticker]}, Best Sell Threshold: {best_sell_thresholds[ticker]}, Portfolio Return: {best_cumulative_returns[ticker] * 100:.2f}%")
-        body_lines.append(f"Today's Action: {action}")
+        body_lines.append(f"Today's Action: {last_signal}")
 
     body = "\n".join(body_lines)
 
@@ -260,7 +253,6 @@ def run_strategy():
 
     print("Strategy results saved to strategy_results.csv")
     print("Performance summary saved to performance_summary.csv")
-    print("Trade returns saved to trade_returns.csv")
 
 # Run the strategy
 run_strategy()
