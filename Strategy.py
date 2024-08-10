@@ -20,6 +20,8 @@ TO_EMAIL = os.getenv('TO_EMAIL')
 SMTP_SERVER = 'smtp.gmail.com'
 SMTP_PORT = 587
 
+
+
 def send_email(subject, body, attachments):
     if not isinstance(attachments, list):
         raise ValueError("Attachments should be provided as a list of filenames.")
@@ -60,6 +62,8 @@ def generate_results_csv(tickers):
         try:
             stock = yf.Ticker(ticker)
             data = stock.history(period='5y')
+            if data.empty:
+                data = stock.history(period='max')
             data['Rate of Change'] = data['Close'].pct_change(periods=12) * 100
             data = data.reset_index()
             data = data[['Date', 'Close', 'Rate of Change']].dropna()
@@ -129,9 +133,21 @@ def run_strategy():
     results['Date'] = pd.to_datetime(results['Date'], utc=True)
     results.sort_values(by=['Ticker', 'Date'], inplace=True)
 
+
+    # Calculate Buy-and-Hold Returns
+    buy_and_hold_returns = {}
+
+    for ticker in tickers:
+        ticker_data = results[results['Ticker'] == ticker]
+        if not ticker_data.empty:
+            first_day_price = ticker_data.iloc[0]['Close Price']
+            last_day_price = ticker_data.iloc[-1]['Close Price']
+            buy_and_hold_return = (last_day_price - first_day_price) / first_day_price
+            buy_and_hold_returns[ticker] = buy_and_hold_return * 100
+
     # Define ranges for thresholds
-    buy_threshold_range = np.arange(0.5, 2.5, 0.5)
-    sell_threshold_range = np.arange(-2.5, -5.0, -2.5)
+    buy_threshold_range = np.arange(0.25, 2.5, 0.25)
+    sell_threshold_range = np.arange(-2.5, -5.5, -2.5)
 
     # Initialize best thresholds and performance
     best_buy_thresholds = {}
@@ -243,6 +259,13 @@ def run_strategy():
         last_signal = results[results['Ticker'] == ticker].iloc[-1]['Signal']
         body_lines.append(f"{ticker}: Best Buy Threshold: {best_buy_thresholds[ticker]}, Best Sell Threshold: {best_sell_thresholds[ticker]}, Portfolio Return: {best_cumulative_returns[ticker] * 100:.2f}%")
         body_lines.append(f"Today's Action: {last_signal}")
+
+        # Add Buy-and-Hold Return
+        buy_and_hold_return = buy_and_hold_returns.get(ticker, None)
+        if buy_and_hold_return is not None:
+            body_lines.append(f"Buy-and-Hold Return: {buy_and_hold_return:.2f}%")
+        else:
+            body_lines.append("Buy-and-Hold Return: Data not available")
 
     body = "\n".join(body_lines)
 
